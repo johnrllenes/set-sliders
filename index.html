@@ -82,10 +82,36 @@
 
     /* High-Contrast Black Hand Grab Cursor on Sets & Elements */
     .grab-hand {
+      touch-action: none;
       cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><path fill='%23000000' stroke='%23ffffff' stroke-width='1.5' d='M9 11V4.5a1.5 1.5 0 0 1 3 0V10h1V3.5a1.5 1.5 0 0 1 3 0V10h1V5.5a1.5 1.5 0 0 1 3 0V14c0 4.4-3.6 8-8 8h-1.5c-3.1 0-5.4-1.8-6.8-4.5l-1.9-3.6a1.4 1.4 0 0 1 2.2-1.6L7 14V11z'/></svg>") 10 4, grab;
     }
     .grab-hand:active {
       cursor: grabbing;
+    }
+    .set-resize-handle {
+      touch-action: none;
+    }
+
+    /* Touch Screen Target Sizing & Mobile Hero Scaling */
+    @media (pointer: coarse) {
+      .set-resize-handle {
+        width: 22px !important;
+        height: 22px !important;
+        margin-left: -4px;
+        margin-top: -4px;
+      }
+      .el-menu-btn {
+        padding: 4px 8px !important;
+        font-size: 14px !important;
+      }
+      .set-top-badge {
+        padding: 4px 14px !important;
+      }
+    }
+    @media (max-width: 639px) {
+      .hero-fanned-corner {
+        transform: scale(0.58);
+      }
     }
 
     /* Validation Shake & Red Border Flash */
@@ -233,7 +259,7 @@
       </div>
 
       <!-- Interactive Fanned Set Slider Cards (Bottom-Left — Exact Stacked Poker Fan) -->
-      <div class="pointer-events-none absolute bottom-0 left-0 w-[440px] h-[360px]">
+      <div class="hero-fanned-corner origin-bottom-left pointer-events-none absolute bottom-0 left-0 w-[440px] h-[360px]">
         <!-- 1. Difference Card (Blue — Back Left) -->
         <button type="button" tabindex="0"
           style="bottom: 108px; left: 8px; width: 224px; height: 146px;"
@@ -303,7 +329,7 @@
       </div>
 
       <!-- Interactive Fanned Set Slider Cards (Bottom-Right — Exact Stacked Poker Fan) -->
-      <div class="pointer-events-none absolute bottom-0 right-0 w-[440px] h-[360px]">
+      <div class="hero-fanned-corner origin-bottom-right pointer-events-none absolute bottom-0 right-0 w-[440px] h-[360px]">
         <!-- 4. Set Card (Yellow — Back Right) -->
         <button type="button" tabindex="0"
           style="bottom: 108px; right: 8px; width: 224px; height: 146px;"
@@ -355,7 +381,7 @@
       </div>
 
       <!-- Center Hero Content (z-30 so Role Panels Always Overlap Corner Fanned Cards) -->
-      <div id="menu-hero-center" class="relative z-30 w-full max-w-lg text-center">
+      <div id="menu-hero-center" class="relative z-30 w-full max-w-lg text-center pb-14 sm:pb-0">
         <h1 class="font-heading text-5xl sm:text-6xl font-extrabold tracking-tight text-blue-800 dark:text-blue-400">
           Set Sliders
         </h1>
@@ -1022,8 +1048,11 @@
             <!-- Layer 3: Set Sliders Opaque SVG Masking Overlays (Covers masked regions & masked elements physically) -->
             <svg id="slider-masks-svg" class="absolute inset-0 w-full h-full z-[4] pointer-events-none"></svg>
 
-            <!-- Layer 4: Live Multi-User Cursors Layer -->
-            <div id="cursors-layer" class="absolute inset-0 z-[5] pointer-events-none"></div>
+            <!-- Layer 4: Set Name Badges Layer (Always Visible Above Set Sliders) -->
+            <div id="set-badges-layer" class="absolute inset-0 z-[5] pointer-events-none"></div>
+
+            <!-- Layer 5: Live Multi-User Cursors Layer -->
+            <div id="cursors-layer" class="absolute inset-0 z-[6] pointer-events-none"></div>
           </div>
         </div>
       </div>
@@ -2008,7 +2037,18 @@
     }
 
     async function checkRoomCodeOccupied(code) {
-      // 1. Check same-browser tabs via BroadcastChannel
+      // 1. Check same-browser localStorage room heartbeat
+      try {
+        const raw = localStorage.getItem('set_sliders_active_room_' + code);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.ts && Date.now() - parsed.ts < 8000) {
+            return true;
+          }
+        }
+      } catch (e) {}
+
+      // 2. Check same-browser tabs via BroadcastChannel
       const tabOccupied = await new Promise(resolve => {
         if (!('BroadcastChannel' in window)) return resolve(false);
         const bc = new BroadcastChannel('set_sliders_room_' + code);
@@ -2026,11 +2066,11 @@
             bc.close();
             resolve(false);
           }
-        }, 280);
+        }, 600);
       });
       if (tabOccupied) return true;
 
-      // 2. Check online PeerJS room ID
+      // 3. Check online PeerJS room ID
       if (typeof Peer === 'undefined' || isEffectiveOffline()) return false;
       return await new Promise(resolve => {
         let probePeer = null;
@@ -2050,15 +2090,25 @@
             conn.on('open', () => finish(true));
             conn.on('data', () => finish(true));
           });
-          probePeer.on('error', (err) => {
-            if (err && err.type === 'peer-unavailable') finish(false);
-            else finish(false);
-          });
-          setTimeout(() => finish(false), 1800);
+          probePeer.on('error', () => finish(false));
+          setTimeout(() => finish(false), 3200);
         } catch (e) {
           finish(false);
         }
       });
+    }
+
+    function autoFitCanvasForMobile() {
+      const viewport = document.getElementById('canvas-viewport');
+      if (!viewport) return;
+      const availWidth = viewport.clientWidth - 28;
+      if (availWidth > 0 && availWidth < BASE_CANVAS_WIDTH) {
+        const fittedZoom = Math.max(0.4, Math.floor((availWidth / BASE_CANVAS_WIDTH) * 10) / 10);
+        state.zoom = fittedZoom;
+        const zoomLbl = document.getElementById('zoom-label');
+        if (zoomLbl) zoomLbl.textContent = `${Math.round(state.zoom * 100)}%`;
+        applyCanvasTransform();
+      }
     }
 
     async function regenerateClassCode(announce = true) {
@@ -2281,6 +2331,7 @@
       }
 
       applyPermissionUI();
+      autoFitCanvasForMobile();
       renderAll(false);
     }
 
@@ -3267,8 +3318,10 @@
 
     function renderSetsLayer() {
       const layer = document.getElementById('sets-layer');
+      const badgesLayer = document.getElementById('set-badges-layer');
       if (!layer) return;
       layer.innerHTML = '';
+      if (badgesLayer) badgesLayer.innerHTML = '';
 
       state.sets.forEach(s => {
         const parent = getParentSet(s);
@@ -3285,56 +3338,35 @@
         circleEl.className = `grab-hand absolute rounded-full border-[3px] transition-shadow ${isSelected ? 'ring-4 ring-blue-500/25' : ''}`;
         circleEl.onpointerdown = (e) => startSetDrag(e, s.id);
 
-        // Top Pill Badge (Rename / Delete)
+        // Top Pill Badge (Rendered in Dedicated Top Layer Above Set Sliders)
         const badge = document.createElement('button');
         badge.type = 'button';
         badge.style.backgroundColor = s.stroke;
-        badge.className = 'set-top-badge absolute -top-3.5 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full text-white text-xs font-bold shadow-sm whitespace-nowrap hover:scale-105 transition cursor-pointer z-10';
+        badge.style.left = `${s.x}px`;
+        badge.style.top = `${s.y - s.r - 14}px`;
+        badge.className = 'set-top-badge pointer-events-auto absolute -translate-x-1/2 px-3 py-0.5 rounded-full text-white text-xs font-bold shadow-sm whitespace-nowrap hover:scale-105 transition cursor-pointer ring-2 ring-white/80 dark:ring-slate-900/80';
         badge.textContent = displayLabel;
         badge.onclick = (e) => openSetBadgePopover(e, s.id);
-        circleEl.appendChild(badge);
+        if (badgesLayer) {
+          badgesLayer.appendChild(badge);
+        } else {
+          circleEl.appendChild(badge);
+        }
 
         // Bottom-Right Perimeter Resize Dot
         if (canModifySets()) {
-          const angle = Math.PI / 4;
-          const hx = s.r + Math.cos(angle) * s.r - 7;
-          const hy = s.r + Math.sin(angle) * s.r - 7;
           const handle = document.createElement('div');
-          handle.style.left = `${hx}px`;
-          handle.style.top = `${hy}px`;
+          handle.style.left = `${s.r * (1 + Math.SQRT1_2) - 7}px`;
+          handle.style.top = `${s.r * (1 + Math.SQRT1_2) - 7}px`;
           handle.style.borderColor = s.stroke;
           handle.title = 'Drag to resize set';
-          handle.className = 'set-resize-handle absolute w-3.5 h-3.5 rounded-full bg-white border-[2.5px] shadow cursor-nwse-resize z-10 hover:scale-125 transition';
+          handle.className = 'set-resize-handle absolute w-3.5 h-3.5 rounded-full bg-white border-2 shadow cursor-nwse-resize hover:scale-125 transition-transform';
           handle.onpointerdown = (e) => startSetResize(e, s.id);
           circleEl.appendChild(handle);
         }
 
         layer.appendChild(circleEl);
       });
-    }
-
-    function renderElementVisualMarkup(visual) {
-      if (!visual) return '';
-      if (visual.type === 'emoji') {
-        return `<span class="text-lg leading-none">${visual.emoji}</span>`;
-      }
-      if (visual.type === 'image') {
-        const size = visual.size || 64;
-        return `<img src="${visual.src}" alt="" style="width:${size}px;height:${size}px;" class="rounded-lg object-cover pointer-events-none" />`;
-      }
-      if (visual.type === 'icon') {
-        const c = visual.color || '#E11D48';
-        const shapes = {
-          star: `<svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="${c}"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
-          heart: `<svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="${c}"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>`,
-          circle: `<svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="${c}"><circle cx="12" cy="12" r="9"/></svg>`,
-          square: `<svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="${c}"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>`,
-          triangle: `<svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="${c}"><polygon points="12 3 22 20 2 20"/></svg>`,
-          diamond: `<svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="${c}"><polygon points="12 2 22 12 12 22 2 12"/></svg>`,
-        };
-        return shapes[visual.shape] || '';
-      }
-      return '';
     }
 
     function renderElementsLayer() {
@@ -3344,37 +3376,69 @@
 
       state.elements.forEach(el => {
         const isSelected = state.selectedEntity && state.selectedEntity.type === 'element' && state.selectedEntity.id === el.id;
-        const isImage = el.visual && el.visual.type === 'image';
-
         const chip = document.createElement('div');
         chip.style.left = `${el.x}px`;
         chip.style.top = `${el.y}px`;
-        chip.className = `grab-hand pointer-events-auto absolute rounded-xl bg-white/95 dark:bg-slate-900/95 border border-slate-300 dark:border-slate-700 shadow-sm px-2.5 py-1.5 flex ${isImage ? 'flex-col items-center gap-1' : 'items-center gap-1.5'} text-xs font-bold text-slate-900 dark:text-white ${isSelected ? 'ring-2 ring-blue-500' : ''}`;
+        chip.className = `grab-hand pointer-events-auto absolute inline-flex flex-col items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white/95 dark:bg-slate-900/95 border border-slate-300 dark:border-slate-700 shadow-sm text-xs font-bold text-slate-900 dark:text-white transition-shadow ${isSelected ? 'ring-2 ring-blue-500' : ''}`;
         chip.onpointerdown = (e) => startElementDrag(e, el.id);
 
-        if (isImage) {
-          chip.innerHTML = `
-            <div class="w-full flex items-center justify-between gap-2">
-              <span class="truncate max-w-[90px]">${escapeHtml(el.value || '')}</span>
-              <button type="button" class="el-menu-btn text-slate-400 hover:text-slate-700 dark:hover:text-white px-1 font-extrabold">⋮</button>
-            </div>
-            ${renderElementVisualMarkup(el.visual)}
-          `;
-        } else {
-          chip.innerHTML = `
-            ${renderElementVisualMarkup(el.visual)}
-            ${el.value ? `<span>${escapeHtml(el.value)}</span>` : ''}
-            <button type="button" class="el-menu-btn text-slate-400 hover:text-slate-700 dark:hover:text-white pl-1 font-extrabold">⋮</button>
-          `;
+        const topRow = document.createElement('div');
+        topRow.className = 'inline-flex items-center gap-1.5';
+
+        if (el.visual) {
+          if (el.visual.type === 'icon') {
+            const iconWrap = document.createElement('span');
+            iconWrap.style.color = el.visual.color || '#E11D48';
+            iconWrap.innerHTML = getBuiltInIconSvg(el.visual.shape);
+            topRow.appendChild(iconWrap);
+          } else if (el.visual.type === 'emoji') {
+            const em = document.createElement('span');
+            em.className = 'text-base leading-none';
+            em.textContent = el.visual.emoji;
+            topRow.appendChild(em);
+          }
         }
 
-        const menuBtn = chip.querySelector('.el-menu-btn');
-        if (menuBtn) {
-          menuBtn.onclick = (e) => openElementOptionsPopover(e, el.id);
+        if (el.value) {
+          const textSpan = document.createElement('span');
+          textSpan.textContent = el.value;
+          topRow.appendChild(textSpan);
+        }
+
+        const menuBtn = document.createElement('button');
+        menuBtn.type = 'button';
+        menuBtn.textContent = '⋮';
+        menuBtn.title = 'Element options';
+        menuBtn.className = 'el-menu-btn ml-0.5 px-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-bold leading-none';
+        menuBtn.onclick = (e) => openElementOptionsPopover(e, el.id);
+        topRow.appendChild(menuBtn);
+
+        chip.appendChild(topRow);
+
+        if (el.visual && el.visual.type === 'image' && el.visual.src) {
+          const img = document.createElement('img');
+          img.src = el.visual.src;
+          img.alt = el.value || 'Element picture';
+          img.style.width = `${el.visual.size || 64}px`;
+          img.style.height = `${el.visual.size || 64}px`;
+          img.className = 'rounded-lg object-cover border border-slate-200 dark:border-slate-700 pointer-events-none';
+          chip.appendChild(img);
         }
 
         layer.appendChild(chip);
       });
+    }
+
+    function getBuiltInIconSvg(shape) {
+      const svgs = {
+        star: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>',
+        heart: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>',
+        circle: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="9"/></svg>',
+        square: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>',
+        triangle: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 3 22 20 2 20"/></svg>',
+        diamond: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 22 12 12 22 2 12"/></svg>',
+      };
+      return svgs[shape] || svgs.circle;
     }
 
     function renderSlidersDockUI() {
@@ -3384,14 +3448,14 @@
       const formulaText = document.getElementById('slider-formula-text');
       const elementsText = document.getElementById('slider-elements-text');
 
-      // Highlight active slider operation cards so users clearly see which ones are toggled ON
+      // Highlight active slider buttons on the left
+      const activeOps = new Set(state.sliders.map(sl => sl.op));
       document.querySelectorAll('[data-slider-card]').forEach(btn => {
-        const opKey = btn.getAttribute('data-slider-card');
-        const isActive = state.sliders.some(sl => sl.op === opKey);
-        if (isActive) {
-          btn.classList.add('border-blue-500', 'ring-2', 'ring-blue-500/25', 'bg-blue-50/50', 'dark:bg-blue-950/30');
+        const op = btn.getAttribute('data-slider-card');
+        if (activeOps.has(op)) {
+          btn.classList.add('ring-2', 'ring-blue-500', 'border-blue-500', 'bg-blue-50/40', 'dark:bg-blue-950/30');
         } else {
-          btn.classList.remove('border-blue-500', 'ring-2', 'ring-blue-500/25', 'bg-blue-50/50', 'dark:bg-blue-950/30');
+          btn.classList.remove('ring-2', 'ring-blue-500', 'border-blue-500', 'bg-blue-50/40', 'dark:bg-blue-950/30');
         }
       });
 
@@ -3413,51 +3477,46 @@
       listEl.innerHTML = state.sliders.map(sl => {
         const meta = SLIDER_META[sl.op];
         const setPills = state.sets.map(s => {
-          const activeIdx = sl.setIds.indexOf(s.id);
-          const isSelected = activeIdx !== -1;
-          const orderPrefix = sl.op === 'difference' && isSelected ? `${activeIdx + 1}. ` : '';
+          const isChosen = sl.setIds.includes(s.id);
           return `
             <button type="button" onclick="toggleSetInSliderLayer('${sl.id}', '${s.id}')"
-              style="${isSelected ? `background-color:${s.stroke};border-color:${s.stroke};color:#fff;` : ''}"
-              class="px-2.5 py-1 rounded-full text-xs font-bold border border-slate-300 dark:border-slate-700 transition">
-              ${orderPrefix}${escapeHtml(s.name)}
+              style="${isChosen ? `background-color:${s.stroke};border-color:${s.stroke};color:#fff;` : `border-color:${s.stroke};`}"
+              class="px-2.5 py-1 rounded-full text-[11px] font-bold border transition ${isChosen ? 'shadow-sm' : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 opacity-75 hover:opacity-100'}">
+              ${escapeHtml(s.name)}
             </button>
           `;
         }).join('');
 
-        const swapBtn = sl.op === 'difference' && sl.setIds.length === 2
-          ? `<button type="button" onclick="swapDifferenceOrder('${sl.id}')" class="px-2 py-0.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-[11px] font-bold hover:bg-slate-300 transition">⇄ Swap</button>`
+        const swapBtn = (sl.op === 'difference' && sl.setIds.length === 2)
+          ? `<button type="button" onclick="swapDifferenceOrder('${sl.id}')" class="px-2 py-0.5 rounded-lg bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 text-[11px] font-bold hover:bg-blue-200 transition">⇄ Swap</button>`
           : '';
 
         return `
-          <div class="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 flex flex-wrap items-center justify-between gap-2">
-            <div class="flex flex-wrap items-center gap-1.5">
-              <span class="text-xs font-extrabold text-slate-900 dark:text-white mr-1">${meta.label}:</span>
-              ${setPills}
-              ${swapBtn}
+          <div class="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 space-y-2 shadow-sm">
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color:${meta.overlay};"></span>
+                <span class="text-xs font-extrabold text-slate-900 dark:text-white">${escapeHtml(formatSliderFormula(sl))}</span>
+                ${swapBtn}
+              </div>
+              <button type="button" onclick="removeSliderLayer('${sl.id}')" title="Remove slider"
+                class="text-xs font-bold text-slate-400 hover:text-rose-600 px-1.5">✕</button>
             </div>
-            <button type="button" onclick="removeSliderLayer('${sl.id}')" title="Remove slider"
-              class="w-6 h-6 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-bold text-xs flex items-center justify-center transition">
-              ✕
-            </button>
+            <div class="flex flex-wrap gap-1.5">${setPills}</div>
           </div>
         `;
       }).join('');
 
       formulaText.textContent = formatCombinedSlidersFormula(state.sliders);
 
-      const visibleElements = state.elements
+      const matchingEls = state.elements
         .filter(el => isPointUnmaskedByAllSliders(el.x + 28, el.y + 14))
         .map(el => el.value || (el.visual && el.visual.label) || (el.visual && el.visual.emoji) || 'Item');
 
-      elementsText.textContent = visibleElements.length > 0
-        ? `{ ${visibleElements.join(', ')} }`
-        : '{ } (Empty Set)';
+      elementsText.textContent = matchingEls.length > 0 ? `{ ${matchingEls.join(', ')} }` : '{ } (Empty Set ∅)';
     }
 
-    // ==================== SAVE / LOAD SLOTS & JSON EXPORT ====================
-    let pendingSlotAction = null;
-
+    // ==================== SAVE / LOAD BOARDS & OFFLINE CACHE ====================
     function getSavedSlots() {
       try {
         const raw = localStorage.getItem(SAVE_SLOTS_KEY);
@@ -3469,13 +3528,21 @@
     }
 
     function setSavedSlots(slots) {
-      localStorage.setItem(SAVE_SLOTS_KEY, JSON.stringify(slots));
+      try {
+        localStorage.setItem(SAVE_SLOTS_KEY, JSON.stringify(slots));
+      } catch (e) {
+        showToast('Could not save to browser storage.');
+      }
+    }
+
+    function canLoadSavedBoards() {
+      return !state.inClassroom || state.role === 'teacher';
     }
 
     function openSaveLoadModal() {
       const loadDeviceBtn = document.getElementById('load-json-device-btn');
       if (loadDeviceBtn) {
-        loadDeviceBtn.classList.toggle('hidden', state.inClassroom);
+        loadDeviceBtn.classList.toggle('hidden', !canLoadSavedBoards());
       }
       renderSaveSlotsList();
       openModal('saveload-modal');
@@ -3484,6 +3551,7 @@
     function renderSaveSlotsList() {
       const container = document.getElementById('save-slots-container');
       const slots = getSavedSlots();
+      const allowLoad = canLoadSavedBoards();
       let html = '';
 
       for (let i = 0; i < 3; i++) {
@@ -3496,7 +3564,7 @@
                 <div class="text-[11px] text-slate-500">${slot.sets.length} sets · ${slot.elements.length} elements · ${slot.savedAt || ''}</div>
               </div>
               <div class="flex items-center gap-1.5 shrink-0">
-                ${!state.inClassroom ? `<button type="button" onclick="loadFromSlot(${i})" class="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold">Load</button>` : ''}
+                ${allowLoad ? `<button type="button" onclick="loadFromSlot(${i})" class="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold">Load</button>` : ''}
                 <button type="button" onclick="promptSlotAction('overwrite', ${i})" class="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold">Overwrite</button>
                 <button type="button" onclick="promptSlotAction('delete', ${i})" class="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-semibold">✕</button>
               </div>
@@ -3505,7 +3573,7 @@
         } else {
           html += `
             <div class="rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 p-3.5 flex items-center justify-between gap-3">
-              <div class="text-xs font-semibold text-slate-400">Slot ${i + 1} — Empty</div>
+              <div class="text-xs font-semibold text-slate-400">Slot ${i + 1}: Empty</div>
               <button type="button" onclick="saveToSlot(${i})" class="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold">Save Here</button>
             </div>
           `;
@@ -3514,7 +3582,44 @@
       container.innerHTML = html;
     }
 
-    function buildBoardSnapshot() {
+    let pendingSlotAction = null;
+
+    function promptSlotAction(type, idx) {
+      pendingSlotAction = { type, idx };
+      const title = document.getElementById('slot-confirm-title');
+      const desc = document.getElementById('slot-confirm-desc');
+      const btn = document.getElementById('slot-confirm-btn');
+      if (type === 'overwrite') {
+        title.textContent = `Overwrite Slot ${idx + 1}?`;
+        desc.textContent = 'This will replace the previously saved board in this slot with your current canvas.';
+        btn.className = 'px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold';
+        btn.textContent = 'Overwrite';
+      } else {
+        title.textContent = `Delete Slot ${idx + 1}?`;
+        desc.textContent = 'This saved board will be permanently removed from this browser.';
+        btn.className = 'px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold';
+        btn.textContent = 'Delete';
+      }
+      openModal('slot-confirm-modal');
+    }
+
+    function executePendingSlotAction() {
+      closeModal('slot-confirm-modal');
+      if (!pendingSlotAction) return;
+      const { type, idx } = pendingSlotAction;
+      pendingSlotAction = null;
+      if (type === 'overwrite') {
+        saveToSlot(idx);
+      } else if (type === 'delete') {
+        const slots = getSavedSlots();
+        slots[idx] = null;
+        setSavedSlots(slots);
+        renderSaveSlotsList();
+        showToast(`Deleted Slot ${idx + 1}.`);
+      }
+    }
+
+    function createBoardSnapshot() {
       return {
         title: state.title,
         canvasSize: state.canvasSize,
@@ -3527,56 +3632,20 @@
 
     function saveToSlot(idx) {
       const slots = getSavedSlots();
-      slots[idx] = buildBoardSnapshot();
+      slots[idx] = createBoardSnapshot();
       setSavedSlots(slots);
       renderSaveSlotsList();
       showToast(`Saved board to Slot ${idx + 1}.`);
     }
 
     function loadFromSlot(idx) {
-      if (state.inClassroom) return;
+      if (!canLoadSavedBoards()) return;
       const slots = getSavedSlots();
       const slot = slots[idx];
       if (!slot) return;
       applyLoadedSnapshot(slot);
       closeModal('saveload-modal');
       showToast(`Loaded "${slot.title || 'Untitled Set'}".`);
-    }
-
-    function promptSlotAction(action, idx) {
-      pendingSlotAction = { action, idx };
-      const titleEl = document.getElementById('slot-confirm-title');
-      const descEl = document.getElementById('slot-confirm-desc');
-      const btnEl = document.getElementById('slot-confirm-btn');
-
-      if (action === 'overwrite') {
-        titleEl.textContent = `Overwrite Slot ${idx + 1}?`;
-        descEl.textContent = 'This will replace the previously saved board in this slot.';
-        btnEl.className = 'px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold';
-        btnEl.textContent = 'Overwrite';
-      } else {
-        titleEl.textContent = `Delete Slot ${idx + 1}?`;
-        descEl.textContent = 'This saved board will be permanently removed from this browser slot.';
-        btnEl.className = 'px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold';
-        btnEl.textContent = 'Delete';
-      }
-      openModal('slot-confirm-modal');
-    }
-
-    function executePendingSlotAction() {
-      if (!pendingSlotAction) return;
-      const { action, idx } = pendingSlotAction;
-      closeModal('slot-confirm-modal');
-      if (action === 'overwrite') {
-        saveToSlot(idx);
-      } else if (action === 'delete') {
-        const slots = getSavedSlots();
-        slots[idx] = null;
-        setSavedSlots(slots);
-        renderSaveSlotsList();
-        showToast(`Deleted Slot ${idx + 1}.`);
-      }
-      pendingSlotAction = null;
     }
 
     function applyLoadedSnapshot(snap) {
@@ -3586,11 +3655,11 @@
       state.elements = Array.isArray(snap.elements) ? snap.elements : [];
       state.sliders = Array.isArray(snap.sliders) ? snap.sliders : [];
       setCanvasPresetSize(snap.canvasSize || 'normal', true);
-      renderAll(false);
+      renderAll(state.inClassroom && state.role === 'teacher');
     }
 
     function exportBoardJson() {
-      const snap = buildBoardSnapshot();
+      const snap = createBoardSnapshot();
       const blob = new Blob([JSON.stringify(snap, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -3599,11 +3668,11 @@
       a.download = `${safeName}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      showToast('Board downloaded as JSON file.');
+      showToast('Downloaded board .json file.');
     }
 
     function importBoardJson(ev) {
-      if (state.inClassroom) return;
+      if (!canLoadSavedBoards()) return;
       const file = ev.target.files && ev.target.files[0];
       if (!file) return;
       const reader = new FileReader();
@@ -3612,22 +3681,22 @@
           const parsed = JSON.parse(reader.result);
           applyLoadedSnapshot(parsed);
           closeModal('saveload-modal');
-          showToast('Board loaded from file.');
+          showToast(`Loaded "${parsed.title || 'Board'}" from device.`);
         } catch (err) {
-          showToast('Invalid JSON board file.');
+          showToast('Invalid board JSON file.');
         }
       };
       reader.readAsText(file);
       ev.target.value = '';
     }
 
-    // ==================== OFFLINE CACHE & PORTABLE FILE ====================
     function refreshOfflineCacheStatus() {
       const badge = document.getElementById('offline-cache-badge');
       const delBtn = document.getElementById('delete-offline-cache-btn');
-      const cached = Boolean(localStorage.getItem(OFFLINE_CACHE_KEY));
+      let cached = false;
+      try { cached = Boolean(localStorage.getItem(OFFLINE_CACHE_KEY)); } catch (e) {}
       if (cached) {
-        badge.textContent = 'Cached in Browser';
+        badge.textContent = 'Cached Ready';
         badge.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300';
         delBtn.classList.remove('hidden');
       } else {
@@ -3641,22 +3710,22 @@
       try {
         localStorage.setItem(OFFLINE_CACHE_KEY, document.documentElement.outerHTML);
         refreshOfflineCacheStatus();
-        showToast('Saved offline copy to browser storage.');
+        showToast('Saved offline snapshot to this browser!');
       } catch (e) {
-        showToast('Browser storage quota exceeded.');
+        showToast('Storage limit reached. Try downloading the offline file instead.');
       }
     }
 
     function deleteAppOfflineCache() {
-      localStorage.removeItem(OFFLINE_CACHE_KEY);
+      try { localStorage.removeItem(OFFLINE_CACHE_KEY); } catch (e) {}
       refreshOfflineCacheStatus();
-      showToast('Removed browser offline cache.');
+      showToast('Removed offline cache snapshot.');
     }
 
     function downloadStandaloneAppFile() {
-      const lockScript = `<script>window.__SET_SLIDERS_OFFLINE_ONLY__ = true;<\/script>`;
-      const rawHtml = '<!DOCTYPE html>\n' + document.documentElement.outerHTML.replace('<head>', '<head>\n  ' + lockScript);
-      const blob = new Blob([rawHtml], { type: 'text/html;charset=utf-8' });
+      const rawHtml = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+      const offlineHtml = rawHtml.replace('<head>', '<head>\n  <script>window.__SET_SLIDERS_OFFLINE_ONLY__ = true;<\/script>');
+      const blob = new Blob([offlineHtml], { type: 'text/html;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -3666,37 +3735,26 @@
       showToast('Downloaded Set-Sliders-Offline.html');
     }
 
-    // ==================== LIVE CLASSROOM NETWORKING (PeerJS + BroadcastChannel) ====================
-    function destroyNetworkSession() {
-      clearInterval(hostHeartbeatTimer);
-      clearInterval(studentHeartbeatTimer);
-      hostHeartbeatTimer = null;
-      studentHeartbeatTimer = null;
-      activeTabStudents.clear();
-
-      hostConnections.forEach(c => { try { c.close(); } catch (e) {} });
-      hostConnections = [];
-
-      if (studentConnection) {
-        try { studentConnection.close(); } catch (e) {}
-        studentConnection = null;
-      }
-      if (peerInstance) {
-        try { peerInstance.destroy(); } catch (e) {}
-        peerInstance = null;
-      }
-      if (broadcastChannel) {
-        try { broadcastChannel.close(); } catch (e) {}
-        broadcastChannel = null;
-      }
-    }
-
+    // ==================== CLASSROOM SYNC (BROADCASTCHANNEL + LOCALSTORAGE + PEERJS) ====================
     function startTeacherRoomHost() {
       const code = state.roomCode;
+      if (!code) return;
+
       if ('BroadcastChannel' in window) {
         broadcastChannel = new BroadcastChannel('set_sliders_room_' + code);
         broadcastChannel.onmessage = (ev) => handleNetworkMessage(ev.data, null);
       }
+
+      const writeRoomHeartbeat = () => {
+        try {
+          localStorage.setItem('set_sliders_active_room_' + code, JSON.stringify({ code, ts: Date.now() }));
+        } catch (e) {}
+      };
+      writeRoomHeartbeat();
+      hostHeartbeatTimer = setInterval(() => {
+        writeRoomHeartbeat();
+        updateHostStudentCount();
+      }, 2500);
 
       if (typeof Peer !== 'undefined' && !isEffectiveOffline()) {
         try {
@@ -3706,35 +3764,20 @@
           peerInstance.on('connection', (conn) => {
             hostConnections.push(conn);
             conn.on('open', () => {
-              sendBoardSnapshotToConn(conn);
+              conn.send(buildBoardSyncPayload());
               updateHostStudentCount();
             });
             conn.on('data', (data) => handleNetworkMessage(data, conn));
             conn.on('close', () => {
               hostConnections = hostConnections.filter(c => c !== conn);
-              if (conn._studentId) delete state.remoteCursors[conn._studentId];
-              renderRemoteCursors();
               updateHostStudentCount();
             });
           });
+          peerInstance.on('error', () => {
+            // Same-browser tabs still work via BroadcastChannel + localStorage
+          });
         } catch (e) {}
       }
-
-      hostHeartbeatTimer = setInterval(() => {
-        const now = Date.now();
-        for (const [sid, ts] of activeTabStudents.entries()) {
-          if (now - ts > 8000) {
-            activeTabStudents.delete(sid);
-            delete state.remoteCursors[sid];
-          }
-        }
-        renderRemoteCursors();
-        updateHostStudentCount();
-        broadcastBoardState();
-      }, 2500);
-
-      updateHostStudentCount();
-      showToast(`Classroom ${code} is live!`);
     }
 
     function connectStudentToRoom(code) {
@@ -3745,9 +3788,25 @@
           type: 'STUDENT_HELLO',
           senderId: MY_CLIENT_ID,
           name: state.participantName,
-          color: state.participantColor,
         });
       }
+
+      studentHeartbeatTimer = setInterval(() => {
+        if (broadcastChannel) {
+          broadcastChannel.postMessage({
+            type: 'STUDENT_PING',
+            senderId: MY_CLIENT_ID,
+            name: state.participantName,
+          });
+        }
+        if (studentConnection && studentConnection.open) {
+          studentConnection.send({
+            type: 'STUDENT_PING',
+            senderId: MY_CLIENT_ID,
+            name: state.participantName,
+          });
+        }
+      }, 2500);
 
       if (typeof Peer !== 'undefined' && !isEffectiveOffline()) {
         try {
@@ -3762,95 +3821,106 @@
                 type: 'STUDENT_HELLO',
                 senderId: MY_CLIENT_ID,
                 name: state.participantName,
-                color: state.participantColor,
               });
             });
             conn.on('data', (data) => handleNetworkMessage(data, conn));
           });
         } catch (e) {}
       }
+    }
 
-      studentHeartbeatTimer = setInterval(() => {
-        broadcastMessage({
-          type: 'STUDENT_PING',
-          senderId: MY_CLIENT_ID,
-          name: state.participantName,
-          color: state.participantColor,
-        });
-      }, 2500);
+    function destroyNetworkSession() {
+      clearInterval(hostHeartbeatTimer);
+      clearInterval(studentHeartbeatTimer);
+      hostHeartbeatTimer = null;
+      studentHeartbeatTimer = null;
+      if (state.role === 'teacher' && state.roomCode) {
+        try { localStorage.removeItem('set_sliders_active_room_' + state.roomCode); } catch (e) {}
+      }
+      if (broadcastChannel) {
+        try { broadcastChannel.close(); } catch (e) {}
+        broadcastChannel = null;
+      }
+      hostConnections.forEach(c => { try { c.close(); } catch (e) {} });
+      hostConnections = [];
+      if (studentConnection) {
+        try { studentConnection.close(); } catch (e) {}
+        studentConnection = null;
+      }
+      if (peerInstance) {
+        try { peerInstance.destroy(); } catch (e) {}
+        peerInstance = null;
+      }
+      activeTabStudents.clear();
     }
 
     function updateHostStudentCount() {
-      if (state.role !== 'teacher') return;
-      const peerCount = hostConnections.filter(c => c.open).length;
-      const total = peerCount + activeTabStudents.size;
+      if (state.role !== 'teacher' || !state.inClassroom) return;
+      const now = Date.now();
+      const uniqueIds = new Set();
+      for (const [id, ts] of activeTabStudents.entries()) {
+        if (now - ts < 7000) uniqueIds.add(id);
+        else activeTabStudents.delete(id);
+      }
+      hostConnections.forEach((c, i) => {
+        if (c && c.open) uniqueIds.add(c._studentId || ('peer_' + i));
+      });
+      const count = uniqueIds.size;
       const pillText = document.getElementById('workspace-room-pill-text');
       if (pillText) {
-        pillText.textContent = `Code: ${state.roomCode} · ${total} Student${total === 1 ? '' : 's'}`;
+        pillText.textContent = `Code: ${state.roomCode} · ${count} Student${count === 1 ? '' : 's'}`;
       }
     }
 
-    function sendBoardSnapshotToConn(conn) {
-      if (!conn || !conn.open) return;
-      conn.send({
+    function buildBoardSyncPayload() {
+      return {
         type: 'BOARD_SYNC',
         senderId: MY_CLIENT_ID,
-        fromTeacher: state.role === 'teacher',
+        senderRole: state.role,
         title: state.title,
         canvasSize: state.canvasSize,
         roomPermission: state.roomPermission,
         boardFrozen: state.boardFrozen,
         sets: state.sets,
         elements: state.elements,
-        sliders: state.role === 'teacher' ? state.sliders : undefined,
-      });
-    }
-
-    function broadcastMessage(payload) {
-      if (!state.inClassroom) return;
-      if (broadcastChannel) {
-        try { broadcastChannel.postMessage(payload); } catch (e) {}
-      }
-      if (state.role === 'teacher') {
-        hostConnections.forEach(c => {
-          if (c.open) { try { c.send(payload); } catch (e) {} }
-        });
-      } else if (studentConnection && studentConnection.open) {
-        try { studentConnection.send(payload); } catch (e) {}
-      }
+        sliders: state.sliders,
+      };
     }
 
     function broadcastBoardState() {
       if (!state.inClassroom) return;
-      broadcastMessage({
-        type: 'BOARD_SYNC',
-        senderId: MY_CLIENT_ID,
-        fromTeacher: state.role === 'teacher',
-        title: state.title,
-        canvasSize: state.canvasSize,
-        roomPermission: state.roomPermission,
-        boardFrozen: state.boardFrozen,
-        sets: state.sets,
-        elements: state.elements,
-        sliders: state.role === 'teacher' ? state.sliders : undefined,
-      });
+      broadcastMessage(buildBoardSyncPayload());
+    }
+
+    function broadcastMessage(msg) {
+      if (broadcastChannel) {
+        try { broadcastChannel.postMessage(msg); } catch (e) {}
+      }
+      if (state.role === 'teacher') {
+        hostConnections.forEach(conn => {
+          if (conn && conn.open) {
+            try { conn.send(msg); } catch (e) {}
+          }
+        });
+      } else if (state.role === 'student' && studentConnection && studentConnection.open) {
+        try { studentConnection.send(msg); } catch (e) {}
+      }
     }
 
     function handleNetworkMessage(msg, sourceConn) {
       if (!msg || msg.senderId === MY_CLIENT_ID) return;
 
-      if (msg.type === 'ROOM_PING' && state.role === 'teacher' && state.inClassroom) {
-        if (broadcastChannel) broadcastChannel.postMessage({ type: 'ROOM_ACTIVE_PONG', senderId: MY_CLIENT_ID });
+      if (msg.type === 'ROOM_PING') {
+        if (state.role === 'teacher' && state.inClassroom && broadcastChannel) {
+          broadcastChannel.postMessage({ type: 'ROOM_ACTIVE_PONG', senderId: MY_CLIENT_ID });
+        }
         return;
       }
 
       if (msg.type === 'STUDENT_HELLO' || msg.type === 'STUDENT_PING') {
         if (state.role === 'teacher') {
-          if (sourceConn) {
-            sourceConn._studentId = msg.senderId;
-          } else {
-            activeTabStudents.set(msg.senderId, Date.now());
-          }
+          if (sourceConn) sourceConn._studentId = msg.senderId;
+          activeTabStudents.set(msg.senderId, Date.now());
           updateHostStudentCount();
           if (msg.type === 'STUDENT_HELLO') {
             showToast(`${msg.name || 'A student'} joined the classroom.`);
@@ -3861,74 +3931,78 @@
       }
 
       if (msg.type === 'STUDENT_LEFT') {
-        activeTabStudents.delete(msg.senderId);
-        delete state.remoteCursors[msg.senderId];
-        renderRemoteCursors();
-        updateHostStudentCount();
+        if (state.role === 'teacher') {
+          activeTabStudents.delete(msg.senderId);
+          delete state.remoteCursors[msg.senderId];
+          updateHostStudentCount();
+          renderRemoteCursors();
+        }
         return;
       }
 
-      if (msg.type === 'CLASSROOM_ENDED' && state.role === 'student') {
-        openModal('classroom-ended-modal');
+      if (msg.type === 'CLASSROOM_ENDED') {
+        if (state.role === 'student' && state.inClassroom) {
+          openModal('classroom-ended-modal');
+        }
         return;
       }
 
       if (msg.type === 'CURSOR_MOVE') {
         state.remoteCursors[msg.senderId] = {
-          name: msg.name || 'Participant',
+          name: msg.name || 'User',
           color: msg.color || '#1E64F0',
           x: msg.x,
           y: msg.y,
           ts: Date.now(),
         };
-        renderRemoteCursors();
         if (state.role === 'teacher') {
-          broadcastMessage(msg);
+          hostConnections.forEach(c => {
+            if (c !== sourceConn && c.open) {
+              try { c.send(msg); } catch (e) {}
+            }
+          });
         }
+        renderRemoteCursors();
         return;
       }
 
       if (msg.type === 'BOARD_SYNC') {
+        state.title = msg.title || state.title;
+        document.getElementById('workspace-title-input').value = state.title;
         if (state.role === 'student') {
-          state.title = msg.title || state.title;
-          document.getElementById('workspace-title-input').value = state.title;
-          state.roomPermission = msg.roomPermission || state.roomPermission;
+          state.roomPermission = msg.roomPermission || 'view_only';
           state.boardFrozen = Boolean(msg.boardFrozen);
-          state.sets = Array.isArray(msg.sets) ? msg.sets : [];
-          state.elements = Array.isArray(msg.elements) ? msg.elements : [];
           if (msg.canvasSize && msg.canvasSize !== state.canvasSize) {
             setCanvasPresetSize(msg.canvasSize, true);
           }
-          if (Array.isArray(msg.sliders) && (state.roomPermission === 'view_only' || state.boardFrozen)) {
-            state.sliders = msg.sliders;
-          }
-          renderAll(false);
-        } else if (state.role === 'teacher') {
-          // Accept student collaborative edits when permitted
-          if (['move_elements', 'add_move_elements', 'limited_collab', 'full_collab'].includes(state.roomPermission)) {
-            if (Array.isArray(msg.elements)) state.elements = msg.elements;
-          }
-          if (['limited_collab', 'full_collab'].includes(state.roomPermission)) {
-            if (Array.isArray(msg.sets)) state.sets = msg.sets;
-          }
-          renderAll(false);
-          broadcastBoardState();
+          if (Array.isArray(msg.sliders)) state.sliders = msg.sliders;
         }
+        if (Array.isArray(msg.sets)) state.sets = msg.sets;
+        if (Array.isArray(msg.elements)) state.elements = msg.elements;
+
+        if (state.role === 'teacher') {
+          hostConnections.forEach(c => {
+            if (c !== sourceConn && c.open) {
+              try { c.send(msg); } catch (e) {}
+            }
+          });
+        }
+        renderAll(false);
       }
     }
 
-    function handleCanvasPointerMove(e) {
+    function handleCanvasPointerMove(ev) {
       if (!state.inClassroom) return;
       const now = Date.now();
-      if (now - lastCursorBroadcastTs < 65) return;
+      if (now - lastCursorBroadcastTs < 60) return;
       lastCursorBroadcastTs = now;
 
       const canvas = document.getElementById('universal-canvas');
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
       const scale = getEffectiveCanvasScale();
-      const x = Math.round((e.clientX - rect.left) / scale);
-      const y = Math.round((e.clientY - rect.top) / scale);
+      const x = Math.round((ev.clientX - rect.left) / scale);
+      const y = Math.round((ev.clientY - rect.top) / scale);
 
       broadcastMessage({
         type: 'CURSOR_MOVE',
@@ -3945,18 +4019,17 @@
       if (!layer) return;
       const now = Date.now();
       let html = '';
-
       for (const [id, cur] of Object.entries(state.remoteCursors)) {
-        if (now - cur.ts > 9000) {
+        if (now - cur.ts > 6000) {
           delete state.remoteCursors[id];
           continue;
         }
         html += `
-          <div style="left:${cur.x}px;top:${cur.y}px;" class="absolute transition-all duration-75 pointer-events-none flex items-start gap-1">
-            <svg class="w-4 h-4 -mt-0.5 -ml-0.5 drop-shadow" viewBox="0 0 24 24" fill="${cur.color}">
-              <path d="M4 2l16 10-7 2-3 7L4 2z"/>
+          <div style="left:${cur.x}px;top:${cur.y}px;" class="absolute pointer-events-none transition-all duration-75">
+            <svg class="w-4 h-4 -ml-0.5 -mt-0.5 drop-shadow" viewBox="0 0 24 24" fill="${cur.color}">
+              <path d="M4 2l16 10-7 2-3 7z"/>
             </svg>
-            <span style="background-color:${cur.color};" class="px-2 py-0.5 rounded-full text-[10px] font-bold text-white shadow whitespace-nowrap">
+            <span style="background-color:${cur.color};" class="ml-3 -mt-1 inline-block px-2 py-0.5 rounded-full text-[10px] font-bold text-white shadow">
               ${escapeHtml(cur.name)}
             </span>
           </div>
@@ -3965,7 +4038,7 @@
       layer.innerHTML = html;
     }
 
-    // ==================== KEYBOARD & GLOBAL LISTENERS ====================
+    // ==================== GLOBAL POPOVER DISMISS & KEYBOARD SHORTCUTS ====================
     function escapeHtml(str) {
       return String(str || '')
         .replace(/&/g, '&amp;')
@@ -3974,7 +4047,7 @@
         .replace(/"/g, '&quot;');
     }
 
-    document.addEventListener('click', (e) => {
+    document.addEventListener('pointerdown', (e) => {
       const setPop = document.getElementById('set-badge-popover');
       if (setPop && !setPop.classList.contains('hidden') && !setPop.contains(e.target) && !e.target.closest('.set-top-badge')) {
         setPop.classList.add('hidden');
@@ -3996,12 +4069,12 @@
         const s = state.sets.find(item => item.id === state.selectedEntity.id);
         if (!s) return;
         let changed = false;
-        if (e.key === 'ArrowLeft')  { s.x = Math.max(s.r, s.x - step); changed = true; }
+        if (e.key === 'ArrowLeft') { s.x = Math.max(s.r, s.x - step); changed = true; }
         if (e.key === 'ArrowRight') { s.x = Math.min(cw - s.r, s.x + step); changed = true; }
-        if (e.key === 'ArrowUp')    { s.y = Math.max(s.r + 18, s.y - step); changed = true; }
-        if (e.key === 'ArrowDown')  { s.y = Math.min(ch - s.r, s.y + step); changed = true; }
-        if (e.key === '+' || e.key === '=') { s.r = Math.min(300, s.r + step); changed = true; }
-        if (e.key === '-' || e.key === '_') { s.r = Math.max(48, s.r - step); changed = true; }
+        if (e.key === 'ArrowUp') { s.y = Math.max(s.r + 18, s.y - step); changed = true; }
+        if (e.key === 'ArrowDown') { s.y = Math.min(ch - s.r, s.y + step); changed = true; }
+        if (e.key === '+' || e.key === '=') { s.r = Math.min(300, s.r + 6); changed = true; }
+        if (e.key === '-' || e.key === '_') { s.r = Math.max(48, s.r - 6); changed = true; }
         if (changed) {
           e.preventDefault();
           s.updatedBy = state.participantName;
@@ -4011,10 +4084,10 @@
         const el = state.elements.find(item => item.id === state.selectedEntity.id);
         if (!el) return;
         let changed = false;
-        if (e.key === 'ArrowLeft')  { el.x = Math.max(8, el.x - step); changed = true; }
+        if (e.key === 'ArrowLeft') { el.x = Math.max(8, el.x - step); changed = true; }
         if (e.key === 'ArrowRight') { el.x = Math.min(cw - 90, el.x + step); changed = true; }
-        if (e.key === 'ArrowUp')    { el.y = Math.max(24, el.y - step); changed = true; }
-        if (e.key === 'ArrowDown')  { el.y = Math.min(ch - 40, el.y + step); changed = true; }
+        if (e.key === 'ArrowUp') { el.y = Math.max(24, el.y - step); changed = true; }
+        if (e.key === 'ArrowDown') { el.y = Math.min(ch - 40, el.y + step); changed = true; }
         if (changed) {
           e.preventDefault();
           el.updatedBy = state.participantName;
@@ -4026,7 +4099,7 @@
     // ==================== INITIALIZATION ====================
     window.addEventListener('DOMContentLoaded', () => {
       updateConnectionModeBadge();
-      regenerateClassCode(false);
+      if (!state.roomCode) regenerateClassCode(false);
     });
   </script>
 </body>
